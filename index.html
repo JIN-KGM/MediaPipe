@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediaPipe Hand Detection</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #2c3e50 0%, #34495e 25%, #2980b9 100%);
+            min-height: 100vh;
+            color: #ecf0f1;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            text-align: center;
+        }
+        
+        h1 {
+            margin-bottom: 30px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            color: #ecf0f1;
+            font-weight: 300;
+            letter-spacing: 1px;
+        }
+        
+        .video-container {
+            position: relative;
+            display: inline-block;
+            background: rgba(44, 62, 80, 0.8);
+            border-radius: 20px;
+            padding: 25px;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        #inputVideo {
+            border-radius: 15px;
+            max-width: 100%;
+            height: auto;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+        }
+        
+        #outputCanvas {
+            position: absolute;
+            top: 25px;
+            left: 25px;
+            border-radius: 15px;
+        }
+        
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            background: linear-gradient(145deg, #3498db, #2980b9);
+            border: none;
+            color: #ecf0f1;
+            padding: 14px 28px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(52, 152, 219, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        button:hover {
+            background: linear-gradient(145deg, #5dade2, #3498db);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(52, 152, 219, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(-1px);
+        }
+        
+        button:disabled {
+            background: linear-gradient(145deg, #7f8c8d, #95a5a6);
+            box-shadow: 0 2px 8px rgba(127, 140, 141, 0.2);
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .info {
+            margin-top: 25px;
+            background: rgba(44, 62, 80, 0.7);
+            padding: 20px;
+            border-radius: 15px;
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+        }
+        
+        .hand-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 18px;
+            margin-top: 15px;
+        }
+        
+        .hand-card {
+            background: linear-gradient(145deg, rgba(52, 152, 219, 0.15), rgba(41, 128, 185, 0.1));
+            padding: 15px;
+            border-radius: 12px;
+            border-left: 4px solid #3498db;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }
+        
+        .hand-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1> JININFRA MediaPipe Hand Detection</h1>
+        
+        <div class="video-container">
+            <video id="inputVideo" width="640" height="480" autoplay muted playsinline></video>
+            <canvas id="outputCanvas" width="640" height="480"></canvas>
+        </div>
+        
+        <div class="controls">
+            <button id="startBtn">카메라 시작</button>
+            <button id="stopBtn" disabled>카메라 중지</button>
+            <button id="toggleDetection">감지 토글</button>
+        </div>
+        
+        <div class="info">
+        <div id="status">카메라를 시작하세요</div>
+            <div id="handInfo" class="hand-info"></div>
+        </div>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('inputVideo');
+        const canvasElement = document.getElementById('outputCanvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const toggleBtn = document.getElementById('toggleDetection');
+        const statusElement = document.getElementById('status');
+        const handInfoElement = document.getElementById('handInfo');
+        
+        let camera = null;
+        let hands = null;
+        let isDetectionActive = true;
+        let handData = [];
+
+        // 손 연결점 정의
+        const HAND_CONNECTIONS = [
+            [0, 1], [1, 2], [2, 3], [3, 4],  // 엄지
+            [0, 5], [5, 6], [6, 7], [7, 8],  // 검지
+            [5, 9], [9, 10], [10, 11], [11, 12],  // 중지
+            [9, 13], [13, 14], [14, 15], [15, 16],  // 약지
+            [13, 17], [17, 18], [18, 19], [19, 20],  // 새끼
+            [0, 17], [5, 9], [9, 13], [13, 17]  // 손바닥
+        ];
+
+        // MediaPipe Hands 초기화
+        async function initializeHands() {
+            // 라이브러리가 로드될 때까지 대기
+            while (typeof Hands === 'undefined') {
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            
+            hands = new Hands({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                }
+            });
+
+            hands.setOptions({
+                maxNumHands: 2,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults(onResults);
+        }
+
+        // 결과 처리 함수
+        function onResults(results) {
+            if (!isDetectionActive) return;
+
+            // 캔버스 초기화
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            handData = [];
+
+            if (results.multiHandLandmarks) {
+                for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+                    const landmarks = results.multiHandLandmarks[i];
+                    const handedness = results.multiHandedness[i];
+                    
+                    // 손 랜드마크 그리기
+                    drawLandmarks(canvasCtx, landmarks, {
+                        color: '#00FF00',
+                        lineWidth: 2,
+                        radius: 3
+                    });
+                    
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {
+                        color: '#00FF00',
+                        lineWidth: 2
+                    });
+
+                    // 손 정보 저장
+                    const handInfo = {
+                        label: handedness.label,
+                        score: handedness.score,
+                        landmarks: landmarks
+                    };
+                    handData.push(handInfo);
+
+                    // 손목 위에 라벨 표시
+                    const wrist = landmarks[0];
+                    const x = wrist.x * canvasElement.width;
+                    const y = wrist.y * canvasElement.height - 20;
+                    
+                    canvasCtx.fillStyle = '#00FF00';
+                    canvasCtx.font = '16px Arial';
+                    canvasCtx.fillText(`${handedness.label} (${(handedness.score * 100).toFixed(1)}%)`, x, y);
+                }
+            }
+
+            canvasCtx.restore();
+            updateHandInfo();
+        }
+
+        // 랜드마크 그리기 함수들 (간단 버전)
+        function drawLandmarks(ctx, landmarks, options) {
+            ctx.fillStyle = options.color;
+            for (const landmark of landmarks) {
+                const x = landmark.x * canvasElement.width;
+                const y = landmark.y * canvasElement.height;
+                ctx.beginPath();
+                ctx.arc(x, y, options.radius, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+        }
+
+        function drawConnectors(ctx, landmarks, connections, options) {
+            ctx.strokeStyle = options.color;
+            ctx.lineWidth = options.lineWidth;
+            
+            for (const connection of connections) {
+                const start = landmarks[connection[0]];
+                const end = landmarks[connection[1]];
+                
+                ctx.beginPath();
+                ctx.moveTo(start.x * canvasElement.width, start.y * canvasElement.height);
+                ctx.lineTo(end.x * canvasElement.width, end.y * canvasElement.height);
+                ctx.stroke();
+            }
+        }
+
+
+
+        // 손 정보 업데이트
+        function updateHandInfo() {
+            if (handData.length === 0) {
+                handInfoElement.innerHTML = '<div>감지된 손이 없습니다</div>';
+                return;
+            }
+
+            const infoHTML = handData.map((hand, index) => `
+                <div class="hand-card">
+                    <h4>${hand.label} 손</h4>
+                    <p>신뢰도: ${(hand.score * 100).toFixed(1)}%</p>
+                    <p>랜드마크: ${hand.landmarks.length}개</p>
+                </div>
+            `).join('');
+
+            handInfoElement.innerHTML = infoHTML;
+        }
+
+        // 카메라 시작
+        async function startCamera() {
+            try {
+                // MediaPipe가 로드되었는지 확인
+                if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
+                    statusElement.textContent = 'MediaPipe 라이브러리를 로딩 중...';
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    
+                    if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
+                        throw new Error('MediaPipe 라이브러리를 로드할 수 없습니다');
+                    }
+                }
+                
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480 }
+                });
+                
+                videoElement.srcObject = stream;
+                
+                // MediaPipe 카메라 대신 수동으로 프레임 처리
+                videoElement.addEventListener('loadeddata', () => {
+                    startFrameProcessing();
+                });
+                
+                statusElement.textContent = '카메라가 실행 중입니다';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+            } catch (error) {
+                console.error('카메라 시작 실패:', error);
+                statusElement.textContent = '카메라 시작 실패: ' + error.message;
+            }
+        }
+
+        // 프레임 처리 시작
+        function startFrameProcessing() {
+            async function processFrame() {
+                if (hands && videoElement.readyState >= 2) {
+                    await hands.send({image: videoElement});
+                }
+                if (!stopBtn.disabled) {
+                    requestAnimationFrame(processFrame);
+                }
+            }
+            processFrame();
+        }
+
+        // 카메라 중지
+        function stopCamera() {
+            if (videoElement.srcObject) {
+                const tracks = videoElement.srcObject.getTracks();
+                tracks.forEach(track => track.stop());
+                videoElement.srcObject = null;
+            }
+            
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            statusElement.textContent = '카메라가 중지되었습니다';
+            handInfoElement.innerHTML = '';
+            
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
+
+        // 감지 토글
+        function toggleDetection() {
+            isDetectionActive = !isDetectionActive;
+            toggleBtn.textContent = isDetectionActive ? '감지 토글' : '감지 시작';
+            
+            if (!isDetectionActive) {
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+                handInfoElement.innerHTML = '<div>감지가 일시정지되었습니다</div>';
+            }
+        }
+
+        // 이벤트 리스너
+        startBtn.addEventListener('click', startCamera);
+        stopBtn.addEventListener('click', stopCamera);
+        toggleBtn.addEventListener('click', toggleDetection);
+
+        // 초기화 - 페이지 로드 후 실행
+        window.addEventListener('load', async () => {
+            await initializeHands();
+            statusElement.textContent = 'MediaPipe 준비 완료! 카메라를 시작하세요.';
+        });
+    </script>
+</body>
+</html>
